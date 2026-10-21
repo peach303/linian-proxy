@@ -1,11 +1,12 @@
 # 黎念 · 免费代理（Deno Deploy）
 
-给静态站 `https://peach303.github.io/linian/` 提供四类能力，聊天数据仍然只存在浏览器里：
+给静态站 `https://peach303.github.io/linian/` 提供五类能力，聊天数据仍然只存在浏览器里：
 
 - MiniMax 语音合成
 - 博查联网搜索
 - 图片转发（绕过外链防盗链 / CORS）
 - 网易云歌曲元信息
+- 网易云公开音频流（302 到 CDN，应用内 `<audio>` 直接播放）
 
 Key 不写进代码：保存在 Deno KV，或通过 Deno Deploy 环境变量提供。网页端只拿到接口，不接触明文 Key。
 
@@ -38,4 +39,5 @@ POST /api/v1/voice/tts
 POST /api/v1/search
 GET  /api/v1/image?u=...&ref=...
 GET  /api/v1/music/resolve?input=...
+GET  /api/v1/music/audio?id=...   （默认 302 到音频 CDN；?stream=1 走同源转发）
 ```
