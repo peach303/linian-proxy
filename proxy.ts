@@ -2,7 +2,7 @@
 /**
  * 黎念 · 免费代理（Deno Deploy）
  *
- * 只做四件事：MiniMax 语音、博查联网搜索、图片转发、网易云元信息。
+ * 只做五件事：MiniMax 语音、博查联网搜索、图片转发、网易云元信息、网易云公开音频流。
  * 聊天记录、字卡、日记都不经过这里；Key 只放在 Deno KV / 环境变量里。
  */
 import { corsHeaders, json, preflight, readJson } from './lib/cors.js'
@@ -10,7 +10,7 @@ import { readConfig, saveConfig, statusOf, verifyAdmin } from './lib/config.js'
 import { bochaSearch } from './lib/bocha.js'
 import { buildMedia, detectVideo } from './lib/media.js'
 import { minimaxTts } from './lib/minimax.js'
-import { resolveNetease } from './lib/netease.js'
+import { resolveNetease, proxyNeteaseAudio } from './lib/netease.js'
 import { imgProxyPath, proxyImage, unb64u } from './lib/image.js'
 
 const VERSION = '1.0.0'
@@ -38,7 +38,8 @@ async function handle(req) {
         'POST /api/v1/voice/tts\n' +
         'POST /api/v1/search\n' +
         'GET  /api/v1/image?u=...&ref=...\n' +
-        'GET  /api/v1/music/resolve?input=...\n',
+        'GET  /api/v1/music/resolve?input=...\n' +
+        'GET  /api/v1/music/audio?id=...\n',
     )
   }
 
@@ -197,6 +198,23 @@ async function handle(req) {
         ...corsHeaders(req),
       },
     })
+  }
+
+  /* ── 网易云公开音频流（应用内播放） ── */
+  if (path === '/api/v1/music/audio' && req.method === 'GET') {
+    const got = await proxyNeteaseAudio(url.searchParams.get('id'), req.headers.get('range'))
+    if (!got.ok) {
+      return json(req, { error: got.error, detail: got.detail }, got.status || 404)
+    }
+    const headers = {
+      'Content-Type': got.type,
+      'Cache-Control': 'no-store',
+      'Accept-Ranges': got.acceptRanges,
+      ...corsHeaders(req),
+    }
+    if (got.length) headers['Content-Length'] = got.length
+    if (got.contentRange) headers['Content-Range'] = got.contentRange
+    return new Response(got.body, { status: got.status, headers })
   }
 
   /* ── 网易云元信息 ── */
