@@ -202,7 +202,31 @@ async function handle(req) {
 
   /* ── 网易云公开音频流（应用内播放） ── */
   if (path === '/api/v1/music/audio' && req.method === 'GET') {
-    const got = await proxyNeteaseAudio(url.searchParams.get('id'), req.headers.get('range'))
+    const id = String(url.searchParams.get('id') ?? '').trim()
+    if (!/^\d{4,}$/.test(id)) return json(req, { error: 'BAD_SONG_ID' }, 400)
+
+    /*
+     * 默认 302 到公开镜像：镜像会再跳到网易云 CDN，音频由浏览器直接取。
+     *
+     * 为什么不在这里把字节转发一遍：
+     * Deno Deploy 的机房访问网易云/国内镜像很慢，整首 10MB+ 会触发
+     * DEPLOYMENT_TIMED_OUT；302 只是让浏览器和 CDN 直接谈 Range，
+     * 首字节快，seek 也正常。链接仍然是应用内的 <audio>，不会跳网页。
+     *
+     * 需要同源转发（例如排查问题）时加 `?stream=1`。
+     */
+    if (url.searchParams.get('stream') !== '1') {
+      return new Response(null, {
+        status: 302,
+        headers: {
+          Location: `https://api.injahow.cn/meting/?type=url&id=${encodeURIComponent(id)}`,
+          'Cache-Control': 'no-store',
+          ...corsHeaders(req),
+        },
+      })
+    }
+
+    const got = await proxyNeteaseAudio(id, req.headers.get('range'))
     if (!got.ok) {
       return json(req, { error: got.error, detail: got.detail }, got.status || 404)
     }
