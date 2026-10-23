@@ -21,6 +21,7 @@ import {
   neteaseQrStart,
   qqAudioUrl,
   qqLoginWithCookie,
+  qqLyric,
   removeSession,
   resolveQQMusic,
 } from './lib/musicAuth.js'
@@ -271,10 +272,11 @@ async function handle(req) {
     return json(req, { ok: await removeSession(token) })
   }
 
-  /* ── 网易云歌词（截句用） ── */
+  /* ── 歌词（截句用）：网易云按 id，QQ 按 songmid ── */
   if (path === '/api/v1/music/lyric' && req.method === 'GET') {
     const id = String(url.searchParams.get('id') ?? '').trim()
-    const r = await neteaseLyric(id)
+    const mid = String(url.searchParams.get('mid') ?? '').trim()
+    const r = mid ? await qqLyric(mid) : await neteaseLyric(id)
     return json(req, r, r.ok ? 200 : 404)
   }
 

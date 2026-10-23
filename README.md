@@ -44,6 +44,7 @@ GET  /api/v1/music/resolve?input=...                              （自动识�
 GET  /api/v1/music/audio?id=...&session=...                       （网易云；默认 302 到音频 CDN，?stream=1 同源转发）
 GET  /api/v1/music/audio?mid=...&session=...                      （QQ 音乐）
 GET  /api/v1/music/lyric?id=...                                   （网易云 LRC → 可用歌词句）
+GET  /api/v1/music/lyric?mid=...                                  （QQ 音乐 LRC → 可用歌词句）
 GET  /api/v1/music/netease/qr                                     （拿扫码 key + 二维码内容）
 GET  /api/v1/music/netease/poll?key=...                            （轮询扫码结果；成功返回 session）
 GET  /api/v1/music/status?session=...                              （查会话对应的账号）
