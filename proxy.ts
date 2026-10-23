@@ -8,6 +8,7 @@
 import { corsHeaders, json, preflight, readJson } from './lib/cors.js'
 import { readConfig, saveConfig, statusOf, verifyAdmin } from './lib/config.js'
 import { bochaSearch } from './lib/bocha.js'
+import { newsSearch } from './lib/news.js'
 import { buildMedia, detectVideo } from './lib/media.js'
 import { minimaxTts } from './lib/minimax.js'
 import { resolveNetease, proxyNeteaseAudio } from './lib/netease.js'
@@ -162,17 +163,32 @@ async function handle(req) {
       })
     }
 
-    const r = await bochaSearch(conf.search, {
+    let r = await bochaSearch(conf.search, {
       query,
       count: body.count,
       freshness: body.freshness,
     })
+
+    /* 博查这次没结果 / 连不上 / 被限流时，换公开新闻 RSS 再试一次。
+       只在「已经配了 Key」的前提下兜底；没配 Key 仍然明确报未配置，不偷偷换源。 */
+    let source = 'bocha'
+    if (!r.ok && ['NO_RESULT', 'FETCH_FAILED', 'TIMEOUT', 'HTTP_ERROR', 'QUOTA', 'BAD_RESPONSE'].includes(r.error)) {
+      const alt = await newsSearch(query, {
+        count: body.count ?? conf.search.count,
+        freshness: body.freshness || conf.search.freshness,
+      })
+      if (alt.ok) {
+        r = alt
+        source = alt.source
+      }
+    }
     if (!r.ok) return json(req, { ok: false, error: r.error, detail: r.detail, query })
 
     for (const it of r.results) it.video = detectVideo(it)
     const out = {
       ok: true,
       query,
+      source,
       count: r.results.length,
       results: r.results,
       images: r.images.length,
