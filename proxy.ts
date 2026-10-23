@@ -163,23 +163,28 @@ async function handle(req) {
       })
     }
 
-    let r = await bochaSearch(conf.search, {
-      query,
-      count: body.count,
-      freshness: body.freshness,
-    })
+    const count = body.count ?? conf.search.count
+    const freshness = body.freshness || conf.search.freshness
+    /** 新闻 / 热点 / 影视 / 新歌这类查询优先走新闻 RSS：
+        博查对「今天的新闻」经常返回内容农场的旧页，RSS 的时效和来源更干净。
+        其他查询（天气、猫狗、店名…）仍走博查。 */
+    const newsy = /(新闻|热点|时事|头条|突发|发布会|国际|国内|政策|财经|科技|赛事|电影|上映|新歌|专辑|音乐|演唱会)/.test(query)
 
-    /* 博查这次没结果 / 连不上 / 被限流时，换公开新闻 RSS 再试一次。
+    let r = newsy
+      ? await newsSearch(query, { count, freshness })
+      : await bochaSearch(conf.search, { query, count, freshness })
+    let source = newsy ? 'news-rss' : 'bocha'
+
+    /* 首选源没结果 / 连不上 / 被限流时，换另一个源再试一次。
        只在「已经配了 Key」的前提下兜底；没配 Key 仍然明确报未配置，不偷偷换源。 */
-    let source = 'bocha'
-    if (!r.ok && ['NO_RESULT', 'FETCH_FAILED', 'TIMEOUT', 'HTTP_ERROR', 'QUOTA', 'BAD_RESPONSE'].includes(r.error)) {
-      const alt = await newsSearch(query, {
-        count: body.count ?? conf.search.count,
-        freshness: body.freshness || conf.search.freshness,
-      })
+    const retryable = ['NO_RESULT', 'FETCH_FAILED', 'TIMEOUT', 'HTTP_ERROR', 'QUOTA', 'BAD_RESPONSE']
+    if (!r.ok && retryable.includes(r.error)) {
+      const alt = newsy
+        ? await bochaSearch(conf.search, { query, count, freshness })
+        : await newsSearch(query, { count, freshness })
       if (alt.ok) {
         r = alt
-        source = alt.source
+        source = newsy ? 'bocha' : 'news-rss'
       }
     }
     if (!r.ok) return json(req, { ok: false, error: r.error, detail: r.detail, query })
