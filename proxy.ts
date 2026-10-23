@@ -11,6 +11,18 @@ import { bochaSearch } from './lib/bocha.js'
 import { buildMedia, detectVideo } from './lib/media.js'
 import { minimaxTts } from './lib/minimax.js'
 import { resolveNetease, proxyNeteaseAudio } from './lib/netease.js'
+import {
+  getSession,
+  neteaseAccountAudioUrl,
+  neteaseLyric,
+  neteaseProfile,
+  neteaseQrPoll,
+  neteaseQrStart,
+  qqAudioUrl,
+  qqLoginWithCookie,
+  removeSession,
+  resolveQQMusic,
+} from './lib/musicAuth.js'
 import { imgProxyPath, proxyImage, unb64u } from './lib/image.js'
 
 const VERSION = '1.0.0'
@@ -39,7 +51,13 @@ async function handle(req) {
         'POST /api/v1/search\n' +
         'GET  /api/v1/image?u=...&ref=...\n' +
         'GET  /api/v1/music/resolve?input=...\n' +
-        'GET  /api/v1/music/audio?id=...\n',
+        'GET  /api/v1/music/audio?id=...&session=...\n' +
+        'GET  /api/v1/music/lyric?id=...\n' +
+        'GET  /api/v1/music/netease/qr\n' +
+        'GET  /api/v1/music/netease/poll?key=...\n' +
+        'GET  /api/v1/music/status?session=...\n' +
+        'POST /api/v1/music/qq/login\n' +
+        'POST /api/v1/music/logout\n',
     )
   }
 
@@ -200,9 +218,85 @@ async function handle(req) {
     })
   }
 
-  /* ── 网易云公开音频流（应用内播放） ── */
+  /* ── 音乐账号：网易云扫码 / QQ Cookie / 会话状态 ── */
+  if (path === '/api/v1/music/netease/qr' && req.method === 'GET') {
+    return json(req, await neteaseQrStart())
+  }
+
+  if (path === '/api/v1/music/netease/poll' && req.method === 'GET') {
+    return json(req, await neteaseQrPoll(url.searchParams.get('key')))
+  }
+
+  if (path === '/api/v1/music/qq/login' && req.method === 'POST') {
+    const body = (await readJson(req)) || {}
+    return json(req, await qqLoginWithCookie(body.cookie))
+  }
+
+  if (path === '/api/v1/music/status' && req.method === 'GET') {
+    const token = url.searchParams.get('session') || req.headers.get('x-music-session') || ''
+    const sess = await getSession(token)
+    if (!sess) return json(req, { ok: false, error: 'NO_SESSION' })
+    return json(req, {
+      ok: true,
+      provider: sess.provider,
+      profile: sess.provider === 'netease' ? await neteaseProfile(sess.cookie) : sess.profile,
+      createdAt: sess.createdAt,
+    })
+  }
+
+  if (path === '/api/v1/music/logout' && req.method === 'POST') {
+    const body = (await readJson(req)) || {}
+    const token = body.session || url.searchParams.get('session') || req.headers.get('x-music-session') || ''
+    return json(req, { ok: await removeSession(token) })
+  }
+
+  /* ── 网易云歌词（截句用） ── */
+  if (path === '/api/v1/music/lyric' && req.method === 'GET') {
+    const id = String(url.searchParams.get('id') ?? '').trim()
+    const r = await neteaseLyric(id)
+    return json(req, r, r.ok ? 200 : 404)
+  }
+
+  /* ── 网易云 / QQ 音频（应用内播放） ── */
   if (path === '/api/v1/music/audio' && req.method === 'GET') {
     const id = String(url.searchParams.get('id') ?? '').trim()
+    const mid = String(url.searchParams.get('mid') ?? '').trim()
+    const token = url.searchParams.get('session') || req.headers.get('x-music-session') || ''
+    const sess = token ? await getSession(token) : null
+
+    // 有登录态：优先换 VIP / 高音质地址，再 302 给浏览器（Range 直接在 CDN 上走）
+    if (sess?.provider === 'netease' && /^\d{4,}$/.test(id)) {
+      const got = await neteaseAccountAudioUrl(id, sess.cookie)
+      if (got?.url) {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: got.url,
+            'Cache-Control': 'no-store',
+            'X-Music-Account': 'netease',
+            'X-Music-Level': got.level,
+            ...corsHeaders(req),
+          },
+        })
+      }
+    }
+    if (sess?.provider === 'qq') {
+      if (!mid) return json(req, { error: 'BAD_SONG_MID', hint: 'QQ 音乐需要 songmid' }, 400)
+      const got = await qqAudioUrl(mid, sess.cookie)
+      if (got?.url) {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: got.url,
+            'Cache-Control': 'no-store',
+            'X-Music-Account': 'qq',
+            ...corsHeaders(req),
+          },
+        })
+      }
+      return json(req, { error: 'NOT_AVAILABLE', hint: 'QQ 音乐没给这个账号返回播放地址（可能是 VIP / 版权 / 地区限制）' }, 404)
+    }
+
     if (!/^\d{4,}$/.test(id)) return json(req, { error: 'BAD_SONG_ID' }, 400)
 
     /*
@@ -241,11 +335,19 @@ async function handle(req) {
     return new Response(got.body, { status: got.status, headers })
   }
 
-  /* ── 网易云元信息 ── */
+  /* ── 网易云 / QQ 音乐元信息 ── */
   if (path === '/api/v1/music/resolve' && req.method === 'GET') {
-    const r = await resolveNetease(url.searchParams.get('input'))
-    if (!r) return json(req, { error: 'not found' }, 404)
-    return json(req, r)
+    const input = url.searchParams.get('input')
+    const provider = String(url.searchParams.get('provider') || '')
+    if (provider !== 'qq') {
+      const r = await resolveNetease(input)
+      if (r) return json(req, { provider: 'netease', ...r })
+    }
+    if (provider !== 'netease') {
+      const q = await resolveQQMusic(input)
+      if (q) return json(req, { provider: 'qq', ...q })
+    }
+    return json(req, { error: 'not found' }, 404)
   }
 
   return json(req, { error: 'NOT_FOUND', path }, 404)
