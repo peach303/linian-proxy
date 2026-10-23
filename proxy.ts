@@ -320,6 +320,13 @@ async function handle(req) {
       return json(req, { error: 'NOT_AVAILABLE', hint: 'QQ 音乐没给这个账号返回播放地址（可能是 VIP / 版权 / 地区限制）' }, 404)
     }
 
+    /** QQ 音乐裸 songmid 没带 session：直接说「先登录」，不要误报成 BAD_SONG_ID */
+    if (mid) {
+      return json(req, {
+        error: 'NO_SESSION',
+        hint: '这首是 QQ 音乐，先在「设置 → 接入 → 音乐账号」里保存 QQ 音乐 Cookie',
+      }, 401)
+    }
     if (!/^\d{4,}$/.test(id)) return json(req, { error: 'BAD_SONG_ID' }, 400)
 
     /*
